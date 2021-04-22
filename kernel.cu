@@ -13,7 +13,7 @@ using namespace std;
 #define Nn 4096
 #define Ni 25088
 #define BATCH_SIZE 1
-#define BLOCK_SIZE 128
+#define BLOCK_SIZE 32
 #define VTYPE double
 
 /*  
@@ -63,13 +63,10 @@ __global__ void d_MatMul_simple1(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, con
 
 __global__ void d_MatMul_simple2(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, const VTYPE* d_synapse) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
 
-    __shared__ VTYPE synapse[BLOCK_SIZE * BLOCK_SIZE];
     __shared__ VTYPE neuron_i[BLOCK_SIZE];
 
     VTYPE temp = 0.0f;
-    VTYPE temp2;
 
     for (int i = 0; i < Ni; i += BLOCK_SIZE) {
         // Phase i = 0:195 
@@ -77,19 +74,43 @@ __global__ void d_MatMul_simple2(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, con
         // synapse[threadIdx.x] = d_synapse[col + i];
 
         __syncthreads();
-        temp2 = 0.0f;
+
         for (int j = 0; j < BLOCK_SIZE; j++) {
-            temp2 += d_synapse[col * Ni + j + i];
+            temp += neuron_i[j] * d_synapse[col * Ni + j + i];
+        }
+
+        __syncthreads();
+    }
+
+    d_neuron_n[col] = temp;    
+}
+
+
+__global__ void d_MatMul_simple3(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, const VTYPE* d_synapse) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    __shared__ VTYPE synapse[BLOCK_SIZE * BLOCK_SIZE];
+    __shared__ VTYPE neuron_i[BLOCK_SIZE];
+
+    VTYPE temp = 0.0f;
+
+    for (int i = 0; i < Ni; i += BLOCK_SIZE) {
+        // Phase i = 0:195 
+        neuron_i[threadIdx.x] = d_neuron_i[i + threadIdx.x];
+        // synapse[threadIdx.x] = d_synapse[col + i];
+
+        __syncthreads();
+
+        for (int j = 0; j < BLOCK_SIZE; j++) {
             temp += neuron_i[j] * d_synapse[col * Ni + j + i];
         }
 
         __syncthreads();
 
-        if (i == 1)
-            printf("In Device, thread: %d \t temp = %lf\n", col, temp2);
     }
 
-    d_neuron_n[col] = temp;    
+    d_neuron_n[col] = temp;
 }
 
 __global__ void d_test(VTYPE* d_synapse, VTYPE* d_neuron_i) {
@@ -103,12 +124,13 @@ bool compare(VTYPE* neuron1, VTYPE* neuron2) {
     bool good = true;
 
     for (int i = 0; i < Nn; i++) {
-        /*if (fabs(neuron1[i] - neuron2[i]) > 1e-2)
+        if (fabs(neuron1[i] - neuron2[i]) > 1e-2)
         {
-            fprintf(stderr, "Result verification failed at element %d!\n", i);
             good = false;
-        }*/
-         printf("At index %d \t Host result: %lf \t Device result: %lf \n", i, neuron1[i], neuron2[i]);
+            printf("At index %d \t Host result: %lf \t Device result: %lf \n", i, neuron1[i], neuron2[i]);
+        }
+
+        
     }
 
     return good;
@@ -148,12 +170,18 @@ int main()
      //Launch kernel
     d_MatMul_simple1<<<BlocksPerGrid, ThreadsPerBlock>>>(d_neuron_i, d_neuron_n, d_synapse);
 
+    //Define kernel launch parameters
+    ThreadsPerBlock = BLOCK_SIZE;
+    BlocksPerGrid = (Nn + ThreadsPerBlock - 1) / ThreadsPerBlock;
+    //Launch kernel
+    d_MatMul_simple2<<<BlocksPerGrid, ThreadsPerBlock>>>(d_neuron_i, d_neuron_n, d_synapse);
+
 
     //Define kernel launch parameters
     ThreadsPerBlock = BLOCK_SIZE;
     BlocksPerGrid = (Nn + ThreadsPerBlock - 1) / ThreadsPerBlock;
     //Launch kernel
-    d_MatMul_simple2<<<BlocksPerGrid, ThreadsPerBlock >>>(d_neuron_i, d_neuron_n, d_synapse);
+    d_MatMul_simple3<<<BlocksPerGrid, ThreadsPerBlock >>>(d_neuron_i, d_neuron_n, d_synapse);
 
 
 
@@ -172,6 +200,8 @@ int main()
     // Copy results from device back to host
     cudaMemcpy(h_neuron_n2, d_neuron_n, Nn * sizeof(VTYPE), cudaMemcpyDeviceToHost);
 
+
+    /*
     VTYPE temp = 0.0f;
     int k = 0;
     int phase = 1;
@@ -181,6 +211,8 @@ int main()
     printf("temp in host : %lf\n", temp);
     //h_neuron_i[i] * 
     
+    */
+
     // Compare host and device results
     if (compare(h_neuron_n, h_neuron_n2)) {
         printf("Passed!\n");
