@@ -183,9 +183,11 @@ __global__ void convolution_layer_cuda(VTYPE* synapse, VTYPE* neuron_i, VTYPE* n
 	VTYPE sum[Nn] = {0};
 	// — Original code — (excluding nn, ii loops)
 	int yout = 0;
-	for (int y = 0; y < Ny; y += Sy)
+	int index = threadIdx.x;
+	int stride = blockDim.x;
+
+	for (int y = index; y < Ny; y += stride)
 	{ // tiling for y;
-		int xout = 0;
 		for (int x = 0; x < Ny; x += Sx)
 		{ // tiling for x;
 			for (int nn = 0; nn < Nn; nn += Tn)
@@ -207,12 +209,11 @@ __global__ void convolution_layer_cuda(VTYPE* synapse, VTYPE* neuron_i, VTYPE* n
 							}
 				for (int n = nn; n < nn + Tn; n++)
 				{
-					neuron_n[yout * (NYSCL * Nn) + xout * Nn + n] = (sum[n]>0) ? sum[n] : sum[n]/4;
+					neuron_n[y * (NXSCL * Nn) + x * Nn + n] = (sum[n]>0) ? sum[n] : sum[n]/4;
+					//printf("yout: %d, xout: %d, index: %d, neuron:%f\n", y, x, index, neuron_n[y * (NXSCL * Nn) + x * Nn + n]);
 				}
 			}
-			xout++;
 		}
-		yout++;
 	}
 }
 
@@ -253,7 +254,7 @@ int main(const int argc, const char **argv)
 	cout << "simple version complete!\n";
 
 	// simple CUDA version
-	convolution_layer_cuda<<<1,1>>>(d_synapse, d_neuron_i, d_neuron_n);
+	convolution_layer_cuda<<<1,256>>>(d_synapse, d_neuron_i, d_neuron_n);
 	cudaDeviceSynchronize();
 	cudaMemcpy(neuron_n2, d_neuron_n, NYSCL * NXSCL * Nn * sizeof(VTYPE), cudaMemcpyDeviceToHost);
 	cout << "cuda simple version complete!\n";
