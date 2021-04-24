@@ -1,3 +1,4 @@
+#pragma once
 #ifndef DNN_H
 #define DNN_H
 
@@ -6,44 +7,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 //#include <sys/time.h>
-
+#define TOL 1e-3
 #define VTYPE float
 
 // Is this a leaky relu?
 VTYPE transfer(VTYPE i) {
-  return (i>0) ? i : i/4;
+    return i;
 }
 
 
-void compare(VTYPE* neuron1, VTYPE* neuron2, int size) {
-  bool error = false;
-  for(int i = 0; i < size; ++i) {
-      VTYPE diff = neuron1[i] - neuron2[i];
-      if(diff>0.001f || diff <-0.001f) {
-      error = true; 
-      break;
-    }
-  }
-  if(error) {
-    for(int i = 0; i < size; ++i) {
-      std::cout << i << " " << neuron1[i] << ":" << neuron2[i];;
+void compare(VTYPE* neuron1, VTYPE* neuron2, int Oy, int Ox, int Oz) {
+    bool correct = true;
 
-      VTYPE diff = neuron1[i] - neuron2[i];
-      if(diff>0.001f || diff <-0.001f) {
-        std::cout << " \t\tERROR";
-      }
-      std::cout << "\n";
+    for (int y = 0; y < Oy; y++) {
+        for (int x = 0; x < Ox; x++) {
+            for (int z = 0; z < Oz; z++) {
+                if (fabs(neuron1[y * (Ox * Oz) + x * (Oz)+z] - neuron2[y * (Ox * Oz) + x * (Oz)+z]) > TOL) {
+                    printf("Error at (y:%d, x:%d, z:%d) \t Host result: %lf \t Device result: %lf\n", y, x, z, neuron1[y * (Ox * Oz) + x * (Oz)+z], neuron2[y * (Ox * Oz) + x * (Oz)+z]);
+                    correct = false;
+                }
+                //printf("Error at (y:%d, x:%d, z:%d) \t Host result: %lf \t Device result: %lf\n", y, x, z, neuron1[y * (Ox * Oz) + x * (Oz)+z], neuron2[y * (Ox * Oz) + x * (Oz)+z]);
+
+
+            }
+        }
     }
-  } else {
-    std::cout << "results match\n";
-  }
+    if (correct) {
+        std::cout << "RESULTS MATCH!" << std::endl;
+    }
+
+
 }
 
-void* aligned_malloc(uint64_t align, uint64_t bytes)  {
-  size_t mask = (align-1)^((size_t)-1);
-  char* ptr = (((char*)malloc(bytes+align)) + align);
-  ptr = (char*) (((size_t)ptr) & mask);
-  return (void*) ptr;
+void* aligned_malloc(uint64_t align, uint64_t bytes) {
+    size_t mask = (align - 1) ^ ((size_t)-1);
+    char* ptr = (((char*)malloc(bytes + align)) + align);
+    ptr = (char*)(((size_t)ptr) & mask);
+    return (void*)ptr;
 }
 
 #endif
