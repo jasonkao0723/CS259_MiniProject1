@@ -1,4 +1,4 @@
-#### Description 1:
+#### Description 11:
 1. cuda version of the `convolution_layer`
 2. the most simple implementation, where 4d arrays were converted to 1-d array on the device 
 3. invoked with <<<1,1>>>, thus this is the single thread benchmark
