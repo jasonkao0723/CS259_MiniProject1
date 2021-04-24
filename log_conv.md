@@ -3,7 +3,7 @@
 2. Best result so far: 3.8038ms for 2D threads with tiling
 3. Batching to be added. 
 
-'''
+```
 ==179153== NVPROF is profiling process 179153, command: ./a.out
 Initializing arrays
 Copying initialized arrays from host to device
@@ -43,4 +43,4 @@ done
                     0.00%  2.7550us         2  1.3770us     211ns  2.5440us  cuDeviceGet
                     0.00%  1.7600us         6     293ns     167ns     657ns  cudaGetErrorString
                     0.00%  1.6440us         3     548ns     170ns  1.1650us  cuDeviceGetCount
-'''
+```
