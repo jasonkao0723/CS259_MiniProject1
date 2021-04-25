@@ -39,13 +39,6 @@ VTYPE (*neuron_n)
 VTYPE (*neuron_n2)
 [NYSCL][NXSCL][Nn];
 
-void* aligned_malloc(uint64_t align, uint64_t bytes)  {
-	size_t mask = (align-1)^((size_t)-1);
-	char* ptr = (((char*)malloc(bytes+align)) + align);
-	ptr = (char*) (((size_t)ptr) & mask);
-	return (void*) ptr;
-}
-  
 
 void fill_convolution_shared_simple(VTYPE (&synapse)[Ky][Kx][Nn][Ni],
 									VTYPE (&neuron_i)[NYPAD][NXPAD][Ni])
@@ -202,14 +195,20 @@ __global__ void conv_layer_exp1(VTYPE *synapse, VTYPE *neuron_i, VTYPE *neuron_n
 
 				// sliding window;
 				for (int ky = 0; ky < Ky; ky++)
-					for (int kx = 0; kx < Kx; kx++)
-						for (int n = nn; n < nn + Tn; n++)
+					for (int kx = 0; kx < Kx; kx++) {
+						for (int n = nn; n < nn + Tn; n++){
+							#pragma unroll
 							for (int i = 0; i < Ni; i++)
 							{
 								VTYPE sv = synapse[ky * (Kx * Nn * Ni) + kx * (Nn * Ni) + n * Ni + i]; //[ky][kx][n][i];
 								VTYPE nv = neuron_i[(ky + y) * (NXPAD * Ni) + (kx + x) * Ni + i]; //[ky + y][kx + x][i];
 								sum[n] += sv * nv;
 							}
+						}
+					}
+					__syncthreads();
+						
+							
 				for (int n = nn; n < nn + Tn; n++)
 				{
 					neuron_n[y * (NXSCL * Nn) + x * Nn + n] = (sum[n]>0) ? sum[n] : sum[n]/4;
@@ -262,7 +261,7 @@ int main(const int argc, const char **argv)
 	cout << "simple version complete!\n";
 
 	// simple CUDA version
-	conv_layer_exp1<<<128,128>>>(d_synapse, d_neuron_i, d_neuron_n);
+	conv_layer_exp1<<<256,256>>>(d_synapse, d_neuron_i, d_neuron_n);
 	cudaDeviceSynchronize();
 	cudaMemcpy(neuron_n2, d_neuron_n, NYSCL * NXSCL * Nn * sizeof(VTYPE), cudaMemcpyDeviceToHost);
 	cout << "cuda simple version complete!\n";
