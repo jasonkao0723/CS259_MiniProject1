@@ -1,5 +1,4 @@
-﻿
-#include <cstdlib>
+﻿#include <cstdlib>
 #include <iostream>
 #include <stdio.h>
 #include <cmath>
@@ -9,9 +8,9 @@
 #include "cuda.h"
 using namespace std;
 
-#define Nn 512
-#define Ni 1024
-#define BATCH_SIZE 2
+#define Nn 4096
+#define Ni 25088
+#define BATCH_SIZE 1
 #define BLOCK_SIZE 32
 #define BlockSize2D 16
 #define VTYPE float
@@ -38,77 +37,54 @@ void init_layer(VTYPE* h_neuron_i, VTYPE* h_neuron_n, VTYPE* synapse) {
     }
 }
 
+__launch_bounds__(1024,2)
 __global__ void d_MatMul_simple1(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, const VTYPE* synapse) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    VTYPE temp = 0.0f;
     
-    #pragma unroll
-    for (int k = 0; k < BATCH_SIZE; k++) {
-        VTYPE temp = 0.0f;
+    if (col < Nn && row < BATCH_SIZE) {
         #pragma unroll
         for (int i = 0; i < Ni; i++) {
-            temp += d_neuron_i[k * Ni + i] * synapse[col + Nn * i];
+            temp += d_neuron_i[row * Ni + i] * synapse[col + Nn * i];
         }
-        d_neuron_n[k * Nn + col] = temp;
+        d_neuron_n[row * Nn + col] = temp;
     }
-
 }
 
 __global__ void d_MatMul_simple2(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, const VTYPE* d_synapse) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
 
-    __shared__ VTYPE neuron_i[BLOCK_SIZE];
+    __shared__ VTYPE neuron_i[BlockSize2D][BlockSize2D];
 
     VTYPE temp = 0.0f;
+
     #pragma unroll
-    for (int i = 0; i < Ni; i += BLOCK_SIZE) {
-        // Phase i = 0:195 
-        neuron_i[threadIdx.x] = d_neuron_i[i+threadIdx.x];
-        // synapse[threadIdx.x] = d_synapse[col + i];
+    for (int i = 0; i < Ni; i += BlockSize2D) {
+
+        if (row < BATCH_SIZE && i + threadIdx.x < Ni) {
+            neuron_i[threadIdx.y][threadIdx.x] = d_neuron_i[row * Ni + i + threadIdx.x];
+        }
+        else {
+            neuron_i[threadIdx.y][threadIdx.x] = 0.0f;
+        }
 
         __syncthreads();
+
         #pragma unroll
-        for (int j = 0; j < BLOCK_SIZE; j++) {
-            temp += neuron_i[j] * d_synapse[col * Ni + j + i];
+        for (int j = 0; j < BlockSize2D; j++) {
+            temp += neuron_i[threadIdx.y][j] * d_synapse[(j + i)* Nn + col];
         }
     
         __syncthreads();
     }
-
-    d_neuron_n[col] = temp;    
+    if (col < Nn && row < BATCH_SIZE) {
+        d_neuron_n[row * Nn + col] = temp;
+    }
+    
 }
-
-//__global__ void d_MatMul_simpleBACKUP(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, const VTYPE* d_synapse) {
-//    int col = blockIdx.x * blockDim.x + threadIdx.x;
-//    int row = blockIdx.y * blockDim.y + threadIdx.y;
-//
-//    __shared__ VTYPE synapse[BlockSize2D][BlockSize2D];
-//    __shared__ VTYPE neuron_i[BlockSize2D];
-//
-//    VTYPE temp = 0.0f;
-//    VTYPE temp2 = 0.0f;
-//
-//    for (int i = 0; i < Ni; i += BlockSize2D) {
-//        // Phase i = 0:195
-//        if (threadIdx.y == 0)
-//            neuron_i[threadIdx.x] = d_neuron_i[i + threadIdx.x];
-//
-//        synapse[threadIdx.y][threadIdx.x] = d_synapse[i + threadIdx.y * Ni + col];
-//        __syncthreads();
-//
-//        for (int j = 0; j < BlockSize2D; j++) {
-//            temp2 += synapse[threadIdx.y][j];
-//            temp += neuron_i[j] * synapse[j][threadIdx.x];
-//        }
-//
-//        __syncthreads();
-//
-//    }
-//    if (row < 1 && col < Nn) {
-//        d_neuron_n[col] = temp;
-//    }
-//    
-//}
-
 
 __global__ void d_MatMul_simple3(const VTYPE* d_neuron_i, VTYPE* d_neuron_n, const VTYPE* d_synapse) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -154,7 +130,6 @@ __global__ void d_test(VTYPE* d_synapse, VTYPE* d_neuron_i) {
     d_neuron_i[idx] *= 1.1f;
 }
 
-
 bool compare(VTYPE* neuron1, VTYPE* neuron2) {
     bool good = true;
     #pragma unroll
@@ -190,45 +165,44 @@ int main()
     VTYPE* d_neuron_n2 = NULL;
     VTYPE* d_neuron_n3 = NULL;
     VTYPE* d_synapse = NULL;
+    VTYPE* test_var = NULL;
     
     cudaMalloc((void**)&d_neuron_i, Ni * BATCH_SIZE * sizeof(VTYPE));
     cudaMalloc((void**)&d_neuron_n1, Nn * BATCH_SIZE * sizeof(VTYPE));
     cudaMalloc((void**)&d_neuron_n2, Nn * BATCH_SIZE * sizeof(VTYPE));
     cudaMalloc((void**)&d_neuron_n3, Nn * BATCH_SIZE * sizeof(VTYPE));
     cudaMalloc((void**)&d_synapse, Nn * Ni * sizeof(VTYPE));
+    cudaMalloc((void**)&test_var, sizeof(VTYPE));
+
+
 
     // Copy arrays from host to device
     cudaMemcpy(d_neuron_i, h_neuron_i, Ni * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyHostToDevice);
-    //cudaMemcpy(d_neuron_n, h_neuron_n, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyHostToDevice);
     cudaMemcpy(d_synapse, h_synapse, Nn * Ni * sizeof(VTYPE), cudaMemcpyHostToDevice);
 
 
      //Define kernel launch parameters
-    int ThreadsPerBlock = BLOCK_SIZE;
-    int BlocksPerGrid = (Nn + ThreadsPerBlock - 1) / ThreadsPerBlock;
-     //Launch kernel
-    d_MatMul_simple1<<<BlocksPerGrid, ThreadsPerBlock>>>(d_neuron_i, d_neuron_n1, d_synapse);
+    dim3 ThreadsPerBlock2D = dim3(BlockSize2D, BlockSize2D);
+    dim3 BlocksPerGrid2D = dim3((Nn + BlockSize2D - 1) / BlockSize2D, (Nn + BlockSize2D - 1) / BlockSize2D);
+    
+    //Launch kernel #1#
+    d_MatMul_simple1<<<BlocksPerGrid2D, ThreadsPerBlock2D>>>(d_neuron_i, d_neuron_n1, d_synapse);
 
     // Copy results from device back to host
     cudaMemcpy(h_neuron_n1, d_neuron_n1, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
 
-    ////Define kernel launch parameters
-    //ThreadsPerBlock = BLOCK_SIZE;
-    //BlocksPerGrid = (Nn + ThreadsPerBlock - 1) / ThreadsPerBlock;
-    ////Launch kernel
-    //d_MatMul_simple2<<<BlocksPerGrid, ThreadsPerBlock>>>(d_neuron_i, d_neuron_n2, d_synapse);
+    //Launch kernel #2#
+    d_MatMul_simple2<<<BlocksPerGrid2D, ThreadsPerBlock2D >>>(d_neuron_i, d_neuron_n2, d_synapse);
 
-    //// Copy results from device back to host
-    //cudaMemcpy(h_neuron_n2, d_neuron_n2, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
+    // Copy results from device back to host
+    cudaMemcpy(h_neuron_n2, d_neuron_n2, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
     
-    //Define kernel launch parameters
-    dim3 ThreadsPerBlock2D = dim3(BlockSize2D, BlockSize2D);
-    dim3 BlocksPerGrid2D = dim3((Nn + BlockSize2D - 1) / BlockSize2D, (Nn + BlockSize2D - 1) / BlockSize2D);
-    //Launch kernel
+    //Launch kernel #3#
     d_MatMul_simple3<<<BlocksPerGrid2D, ThreadsPerBlock2D >>>(d_neuron_i, d_neuron_n3, d_synapse);
 
     // Copy results from device back to host
     cudaMemcpy(h_neuron_n3, d_neuron_n3, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
+
 
     // Run and time on host    
     clock_t begin = clock();
@@ -243,12 +217,12 @@ int main()
             }
             h_neuron_n[k * Nn + i] = temp;
         }
-        /* h_neuron_i  16 x 25088
+        /* 
+        *  h_neuron_i  16 x 25088
         *  h_synapse 4096 x 25088
         *  h_neuron_n 16 x 4096
         */
     }
-
 
     double elapsed = ((double)clock() - (double)begin) / (double)CLOCKS_PER_SEC;
     printf("Took CPU %lf seconds to run\n", elapsed);
@@ -263,7 +237,6 @@ int main()
     printf("temp in host : %lf\n", temp);
     */
 
-    
     
     // Compare host and device results
     if (compare(h_neuron_n, h_neuron_n1)) {
@@ -282,12 +255,14 @@ int main()
     cudaFree(d_neuron_n2);
     cudaFree(d_neuron_n3);
     cudaFree(d_synapse);
+    cudaFree(test_var);
     free(h_neuron_i);
     free(h_neuron_n);
     free(h_synapse);
     free(h_neuron_n1);
     free(h_neuron_n2);
     free(h_neuron_n3);
+
     return 0;
 }
 
