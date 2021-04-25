@@ -39,6 +39,13 @@ VTYPE (*neuron_n)
 VTYPE (*neuron_n2)
 [NYSCL][NXSCL][Nn];
 
+void* aligned_malloc(uint64_t align, uint64_t bytes)  {
+	size_t mask = (align-1)^((size_t)-1);
+	char* ptr = (((char*)malloc(bytes+align)) + align);
+	ptr = (char*) (((size_t)ptr) & mask);
+	return (void*) ptr;
+}
+  
 
 void fill_convolution_shared_simple(VTYPE (&synapse)[Ky][Kx][Nn][Ni],
 									VTYPE (&neuron_i)[NYPAD][NXPAD][Ni])
@@ -178,18 +185,14 @@ void convolution_layer(VTYPE (&synapse)[Ky][Kx][Nn][Ni],
 	}
 }
 
-__global__ void convolution_layer_cuda(VTYPE* synapse, VTYPE* neuron_i, VTYPE* neuron_n)
-{
+__global__ void conv_layer_exp1(VTYPE *synapse, VTYPE *neuron_i, VTYPE *neuron_n) {
+	int i = blockIdx.x;
+	int j = threadIdx.x;
+	int stride_i = gridDim.x;
+	int stride_j = blockDim.x;
 	VTYPE sum[Nn] = {0};
-	// — Original code — (excluding nn, ii loops)
-	int yout = 0;
-	int index = threadIdx.x;
-	int stride = blockDim.x;
-
-	for (int y = index; y < Ny; y += stride)
-	{ // tiling for y;
-		for (int x = 0; x < Ny; x += Sx)
-		{ // tiling for x;
+	for (int y = i; y < Ny; y+=stride_i) {
+		for (int x = j; x < Nx; x+=stride_j) {
 			for (int nn = 0; nn < Nn; nn += Tn)
 			{
 				for (int n = nn; n < nn + Tn; n++)
@@ -210,7 +213,6 @@ __global__ void convolution_layer_cuda(VTYPE* synapse, VTYPE* neuron_i, VTYPE* n
 				for (int n = nn; n < nn + Tn; n++)
 				{
 					neuron_n[y * (NXSCL * Nn) + x * Nn + n] = (sum[n]>0) ? sum[n] : sum[n]/4;
-					//printf("yout: %d, xout: %d, index: %d, neuron:%f\n", y, x, index, neuron_n[y * (NXSCL * Nn) + x * Nn + n]);
 				}
 			}
 		}
@@ -221,6 +223,12 @@ int main(const int argc, const char **argv)
 {
 	cout << "allocating memory\n";
 
+	// Comment the following if you want to experiment with aligned_malloc
+	// synapse   = (VTYPE (*)[Ky][Kx][Nn][Ni])  aligned_malloc(64,  SYNAPSE_SIZE*sizeof(VTYPE));
+  	// neuron_i  = (VTYPE (*)[NYPAD][NXPAD][Ni])aligned_malloc(64,NYPAD*NXPAD*Ni*sizeof(VTYPE));
+  	// neuron_n  = (VTYPE (*)[NYSCL][NXSCL][Nn])aligned_malloc(64,NYSCL*NXSCL*Nn*sizeof(VTYPE));
+  	// neuron_n2 = (VTYPE (*)[NYSCL][NXSCL][Nn])aligned_malloc(64,NYSCL*NXSCL*Nn*sizeof(VTYPE));
+	
 	synapse = (VTYPE(*)[Ky][Kx][Nn][Ni])malloc(SYNAPSE_SIZE * sizeof(VTYPE));
 	neuron_i = (VTYPE(*)[NYPAD][NXPAD][Ni])malloc(NYPAD * NXPAD * Ni * sizeof(VTYPE));
 	neuron_n = (VTYPE(*)[NYSCL][NXSCL][Nn])malloc(NYSCL * NXSCL * Nn * sizeof(VTYPE));
@@ -254,14 +262,14 @@ int main(const int argc, const char **argv)
 	cout << "simple version complete!\n";
 
 	// simple CUDA version
-	convolution_layer_cuda<<<1,256>>>(d_synapse, d_neuron_i, d_neuron_n);
+	conv_layer_exp1<<<128,128>>>(d_synapse, d_neuron_i, d_neuron_n);
 	cudaDeviceSynchronize();
 	cudaMemcpy(neuron_n2, d_neuron_n, NYSCL * NXSCL * Nn * sizeof(VTYPE), cudaMemcpyDeviceToHost);
 	cout << "cuda simple version complete!\n";
 
-	// //Blocked Version
-	// convolution_layer_blocked(*synapse, *neuron_i, *neuron_n2);
-	// cout << "blocked computation complete!\n";
+	// // //Blocked Version
+	// // convolution_layer_blocked(*synapse, *neuron_i, *neuron_n2);
+	// // cout << "blocked computation complete!\n";
 
 	// verify the results
 	compare((VTYPE *)*neuron_n, (VTYPE *)*neuron_n2, NYSCL * NXSCL * Nn);
