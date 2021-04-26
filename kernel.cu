@@ -8,9 +8,9 @@
 #include "cuda.h"
 using namespace std;
 
-#define Nn 4096
-#define Ni 25088
-#define BATCH_SIZE 1
+#define Nn 120
+#define Ni 1000
+#define BATCH_SIZE 2
 #define BLOCK_SIZE 32
 #define BlockSize2D 16
 #define VTYPE float
@@ -178,31 +178,37 @@ int main()
 
     // Copy arrays from host to device
     cudaMemcpy(d_neuron_i, h_neuron_i, Ni * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyHostToDevice);
+    cout << "Copy from Host to Device: " << cudaGetErrorString(cudaGetLastError()) << endl;
     cudaMemcpy(d_synapse, h_synapse, Nn * Ni * sizeof(VTYPE), cudaMemcpyHostToDevice);
-
+    cout << "Copy from Host to Device: " << cudaGetErrorString(cudaGetLastError()) << endl;
 
      //Define kernel launch parameters
     dim3 ThreadsPerBlock2D = dim3(BlockSize2D, BlockSize2D);
-    dim3 BlocksPerGrid2D = dim3((Nn + BlockSize2D - 1) / BlockSize2D, (Nn + BlockSize2D - 1) / BlockSize2D);
+    dim3 BlocksPerGrid2D = dim3((Nn + BlockSize2D - 1) / BlockSize2D, (BATCH_SIZE + BlockSize2D - 1) / BlockSize2D);
     
     //Launch kernel #1#
     d_MatMul_simple1<<<BlocksPerGrid2D, ThreadsPerBlock2D>>>(d_neuron_i, d_neuron_n1, d_synapse);
+    cout << "MatMul_simple1: " << cudaGetErrorString(cudaGetLastError()) << endl;
 
     // Copy results from device back to host
     cudaMemcpy(h_neuron_n1, d_neuron_n1, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
+    cout << "Copy from Device to Host: " << cudaGetErrorString(cudaGetLastError()) << endl;
 
     //Launch kernel #2#
     d_MatMul_simple2<<<BlocksPerGrid2D, ThreadsPerBlock2D >>>(d_neuron_i, d_neuron_n2, d_synapse);
+    cout << "MatMul_simple1: " << cudaGetErrorString(cudaGetLastError()) << endl;
 
     // Copy results from device back to host
     cudaMemcpy(h_neuron_n2, d_neuron_n2, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
-    
+    cout << "Copy from Device to Host: " << cudaGetErrorString(cudaGetLastError()) << endl;
+
     //Launch kernel #3#
     d_MatMul_simple3<<<BlocksPerGrid2D, ThreadsPerBlock2D >>>(d_neuron_i, d_neuron_n3, d_synapse);
+    cout << "MatMul_simple1: " << cudaGetErrorString(cudaGetLastError()) << endl;
 
     // Copy results from device back to host
     cudaMemcpy(h_neuron_n3, d_neuron_n3, Nn * BATCH_SIZE * sizeof(VTYPE), cudaMemcpyDeviceToHost);
-
+    cout << "Copy from Device to Host: " << cudaGetErrorString(cudaGetLastError()) << endl;
 
     // Run and time on host    
     clock_t begin = clock();
@@ -237,8 +243,7 @@ int main()
     printf("temp in host : %lf\n", temp);
     */
 
-    
-    // Compare host and device results
+     //Compare host and device results
     if (compare(h_neuron_n, h_neuron_n1)) {
         printf("1 Passed!\n");
     }
@@ -248,6 +253,27 @@ int main()
     if (compare(h_neuron_n, h_neuron_n3)) {
         printf("3 Passed!\n");
     }
+
+    cout << "Host output[0][6:9]: ";
+    for (int i = 6; i < 9; i++) {
+        printf("%lf, ", h_neuron_n[i]);
+    }
+    cout << endl;
+    cout << "Kernel1 output[0][6:9]: ";
+    for (int i = 6; i < 9; i++) {
+        printf("%lf, ", h_neuron_n1[i]);
+    }
+    cout << endl;
+    cout << "Kernel2 output[0][6:9]: ";
+    for (int i = 6; i < 9; i++) {
+        printf("%lf, ", h_neuron_n2[i]);
+    }
+    cout << endl;
+    cout << "Kernel3 output[0][6:9]: ";
+    for (int i = 6; i < 9; i++) {
+        printf("%lf, ", h_neuron_n3[i]);
+    }
+    cout << endl;
 
     // Free up memory
     cudaFree(d_neuron_i);
@@ -262,6 +288,8 @@ int main()
     free(h_neuron_n1);
     free(h_neuron_n2);
     free(h_neuron_n3);
+
+    cout << "done\n";
 
     return 0;
 }
