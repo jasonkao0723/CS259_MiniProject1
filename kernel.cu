@@ -8,9 +8,9 @@
 #include "cuda.h"
 using namespace std;
 
-#define Nn 120
-#define Ni 1000
-#define BATCH_SIZE 2
+#define Nn 4096
+#define Ni 25088
+#define BATCH_SIZE 16
 #define BLOCK_SIZE 32
 #define BlockSize2D 16
 #define VTYPE float
